@@ -13,7 +13,6 @@ import (
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/joho/godotenv"
 )
 
 type sampleMsg Snapshot
@@ -224,9 +223,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "up", "k":
 				m.offset = max(0, m.offset-1)
 			case "enter", "y":
-				if m.ai.key == "" {
+				if !m.ai.ready() {
 					m.answerError = true
-					m.answer = "Configure intelligence access in .env, then restart Vigil. Local inspection works without a key."
+					m.answer = m.ai.accessError().Error()
 					m.pending = ""
 					return m, nil
 				}
@@ -352,9 +351,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.busy {
 				return m, nil
 			}
-			if m.ai.key == "" {
+			if !m.ai.ready() {
 				m.answerError = true
-				m.answer = "Configure intelligence access in .env, then restart Vigil."
+				m.answer = m.ai.accessError().Error()
 				return m, nil
 			}
 			var payload any
@@ -391,11 +390,38 @@ func clean(s string) string {
 	}, s)
 }
 
+var version = "dev"
+
 func main() {
+	configPath := flag.String("config", "", "load a specific configuration file")
+	createConfig := flag.Bool("init-config", false, "create a private user configuration template and exit")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	snapshot := flag.Bool("snapshot", false, "print a JSON snapshot and exit")
 	search := flag.String("search", "", "filter processes by name or exact PID")
 	inspectPID := flag.Int("inspect", 0, "collect local evidence for a PID as JSON, without an AI request")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("Vigil " + version)
+		return
+	}
+	if *createConfig {
+		path := *configPath
+		if path == "" {
+			var err error
+			path, err = defaultConfigPath()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Vigil: could not locate user config directory")
+				os.Exit(1)
+			}
+		}
+		if err := initConfig(path); err != nil {
+			fmt.Fprintln(os.Stderr, "Vigil:", err)
+			os.Exit(1)
+		}
+		fmt.Println("Created " + path + "\nEdit VIGIL_PROVIDER and VIGIL_API_KEY, then run Vigil. No connection is made during setup.")
+		return
+	}
+
 	if *inspectPID != 0 {
 		if *inspectPID < 1 || int64(*inspectPID) > 2147483647 {
 			fmt.Fprintln(os.Stderr, "Vigil: invalid PID")
@@ -432,10 +458,11 @@ func main() {
 		}
 		return
 	}
-	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
-		fmt.Fprintln(os.Stderr, "Vigil: could not load .env; check its permissions and KEY=value syntax")
+	if err := loadConfig(*configPath); err != nil {
+		fmt.Fprintln(os.Stderr, "Vigil:", err)
 		os.Exit(1)
 	}
+
 	m := model{collector: c, ai: newAIClient(), sort: "cpu", filter: strings.TrimSpace(*search)}
 	if _, e := tea.NewProgram(m, tea.WithAltScreen()).Run(); e != nil {
 		fmt.Fprintln(os.Stderr, "Vigil:", e)

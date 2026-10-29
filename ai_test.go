@@ -32,7 +32,7 @@ func TestAIRequest(t *testing.T) {
 		w.Write([]byte(`{"choices":[{"message":{"content":"Explanation"}}]}`))
 	}))
 	defer server.Close()
-	c := aiClient{"test-key", "test-model", server.URL, server.Client()}
+	c := aiClient{key: "test-key", model: "test-model", endpoint: server.URL, http: server.Client()}
 	result, err := c.ask(context.Background(), "explain", "sample")
 	if err != nil || result != "Explanation" {
 		t.Fatalf("%q %v", result, err)
@@ -47,7 +47,7 @@ func TestAIFailures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(tc.status); w.Write([]byte(tc.body)) }))
 			defer s.Close()
-			c := aiClient{"key", "model", s.URL, s.Client()}
+			c := aiClient{key: "key", model: "model", endpoint: s.URL, http: s.Client()}
 			_, err := c.ask(context.Background(), "", "")
 			if err == nil {
 				t.Fatal("expected error")
@@ -123,7 +123,7 @@ func TestMachineEvidenceForwardedAfterReview(t *testing.T) {
 		w.Write([]byte(`{"choices":[{"message":{"content":"This instance runs /opt/example/agent."}}]}`))
 	}))
 	defer server.Close()
-	m := model{ai: aiClient{"test", "test-model", server.URL, server.Client()}}
+	m := model{ai: aiClient{key: "test", model: "test-model", endpoint: server.URL, http: server.Client()}}
 	next, cmd := m.Update(investigationMsg{data: investigation{Process: relatedProcess{PID: 42, Name: "agent", Executable: "/opt/example/agent"}}})
 	m = next.(model)
 	if cmd != nil || calls != 0 {

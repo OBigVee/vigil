@@ -1,6 +1,6 @@
 # Vigil
 
-A concurrent Go terminal system monitor with optional DeepSeek diagnostics.
+A concurrent Go terminal system monitor with optional Vigil Intelligence diagnostics.
 
 The terminal dashboard includes resource bars, recent CPU/memory sparklines, a highlighted process table, and a process relationship map on the left of wide screens. It adapts to terminals at least 48 columns by 16 rows.
 
@@ -17,7 +17,13 @@ go build -o vigil .
 
 Local monitoring, search, and process inspection work without an API key. To enable Vigil Intelligence, create your own local `.env` using `.env.example` as a reference (see setup below). Each user supplies their own provider key.
 
-This repository currently documents building from source. Prebuilt downloads can be distributed separately through GitHub Releases; platform-specific functionality still needs testing before claiming Windows or macOS support.
+## Prebuilt downloads
+
+Download an archive from [GitHub Releases](https://github.com/OBigVee/vigil/releases). Choose `linux`, `darwin` (macOS), or `windows`, and `amd64` (Intel/AMD) or `arm64` (ARM / Apple Silicon). Extract it, open a terminal in that folder, and run `./vigil` or `.\vigil.exe` in Windows PowerShell. No Go installation is needed. Check the release's `SHA256SUMS` against your archive before running it.
+
+Linux amd64 is the runtime-tested development platform. Linux arm64 and macOS/Windows downloads are experimental cross-compiled builds and need runtime validation; their availability does not imply feature parity. Binaries are unsigned and macOS builds are not notarized.
+
+Run `./vigil --version` to identify the build. For a private user configuration that works regardless of the launch directory, run `./vigil --init-config`, then edit the file path printed by that command.
 
 ## Run
 
@@ -76,28 +82,56 @@ The left pane shows the selected process's visible parent chain, direct children
 
 The normal map uses live process-family data. Press `i` to collect network evidence. After inspection, the map uses that collected snapshot and displays its timestamp; it stays pinned to the investigated PID while reviewing evidence or reading its explanation. Unidentified socket endpoints remain in the detailed evidence without invented software names. Permissions and collection limits can hide relationships; review collection notes for gaps.
 
-## DeepSeek setup
+## Connect an intelligence provider
 
-Create a `.env` file in the directory where you launch Vigil (the project root when using `go run .`):
+Vigil supports DeepSeek, OpenAI (Responses API), Gemini (generateContent), and services exposing an OpenAI-compatible Chat Completions API. Each user supplies their own API key; no shared key is bundled. API billing and model access belong to the user's provider account. A chat subscription is not itself an API key. Local monitoring and evidence inspection work without an external service.
 
-```dotenv
-DEEPSEEK_API_KEY=your-key-here
-DEEPSEEK_MODEL=deepseek-flash
-```
-
-Vigil automatically loads this file at startup. Existing environment variables take priority. `.env` is ignored by Git; `.env.example` contains placeholders only. Never commit a real key or paste it into chat. A missing file is fine; malformed or unreadable files produce an error without displaying their contents. Snapshot mode does not load `.env`.
+Create your private configuration:
 
 ```sh
-go run .
+./vigil --init-config
 ```
 
-Default model: `deepseek-flash`. Override with `DEEPSEEK_MODEL` if needed. Requests use the official HTTPS chat-completions endpoint and a 60-second timeout. Monitoring works without a key.
+Open the printed file in your preferred text editor. Choose one provider and set its key:
+
+```dotenv
+VIGIL_PROVIDER=openai
+VIGIL_API_KEY=your-own-api-key
+```
+
+| Provider value | Default model | Alternative key variable |
+| --- | --- | --- |
+| `deepseek` | `deepseek-flash` | `DEEPSEEK_API_KEY` |
+| `openai` | `gpt-5.6-terra` | `OPENAI_API_KEY` |
+| `gemini` | `gemini-3.8-flash` | `GEMINI_API_KEY` |
+| `compatible` | Set `VIGIL_MODEL` explicitly | `VIGIL_API_KEY` |
+
+`VIGIL_API_KEY` takes priority over the selected provider's key variable. `VIGIL_MODEL` overrides the default; `DEEPSEEK_MODEL`, `OPENAI_MODEL`, and `GEMINI_MODEL` also work for their respective providers. Models and account availability change; choose a model your account can access. Default provider is `deepseek` for compatibility with existing `.env` files. Set `VIGIL_PROVIDER` explicitly to switch services. Unknown providers and incomplete configurations produce an actionable setup error when interpretation is requested.
+
+For another hosted service with an OpenAI-compatible API:
+
+```dotenv
+VIGIL_PROVIDER=compatible
+VIGIL_BASE_URL=https://your-provider.example/v1
+VIGIL_MODEL=your-model-id
+VIGIL_API_KEY=your-own-api-key
+```
+
+The base URL must end at the API prefix, without `/chat/completions`. Remote endpoints require HTTPS. HTTP is allowed only on loopback addresses for local servers; keyless loopback services are supported. Responses must match non-streaming Chat Completions text output. Vendor-specific APIs, Azure-specific authentication, tool-only responses, and every provider's custom options are not universally supported.
+
+Configuration locations use Go's per-user config directory: typically `~/.config/vigil/config.env` on Linux (or `$XDG_CONFIG_HOME`), `~/Library/Application Support/vigil/config.env` on macOS, and `%AppData%\vigil\config.env` on Windows. `--init-config` creates a blank-key file with mode 0600 on Unix and never overwrites an existing file. On Windows, access follows the user's directory ACLs.
+
+Configuration precedence: existing environment variables, then `.env` in the current working directory, then the per-user config file. `--config /path/to/settings.env` loads only the explicit file beneath existing environment variables. Restart Vigil after editing. Missing default files are fine; malformed/unreadable files produce an error without showing their contents. Snapshot/inspection exports and `--version` do not load keys. Existing `DEEPSEEK_API_KEY` / `DEEPSEEK_MODEL` setups continue to work.
+
+Never commit real keys or share your config file. `.env` is Git-ignored; `.env.example` contains blank placeholders. Keys are sent only to the configured endpoint for confirmed interpretations. Requests have a 90-second timeout and do not follow redirects. OpenAI Responses requests set `store=false`. No paid live API calls are required by the test suite.
+
+Protocol references: [OpenAI Responses](https://developers.openai.com/api/reference/python/resources/responses/methods/create), [OpenAI default model](https://developers.openai.com/api/docs/models/gpt-5.6-terra), [Gemini generateContent](https://ai.google.dev/api/generate-content), [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/).
 
 ## Process investigations
 
-Select a process and press `i` or `e`. Vigil collects evidence in the background while monitoring continues, then opens a readable, scrollable local overview. Press Tab to inspect the exact JSON payload. This works without an API key. Enter/y sends the reviewed evidence to DeepSeek for an explanation; Esc/n returns without sending. Long lines wrap so complete paths and endpoints can be reviewed. Esc also cancels collection or a pending API request.
+Select a process and press `i` or `e`. Vigil collects evidence in the background while monitoring continues, then opens a readable, scrollable local overview. Press Tab to inspect the exact JSON payload. This works without an API key. Enter/y sends the reviewed evidence to the configured intelligence service for an explanation; Esc/n returns without sending. Long lines wrap so complete paths and endpoints can be reviewed. Esc also cancels collection or a pending API request.
 
-While collecting, a dedicated panel animates and shows the selected PID, elapsed time, and current OS collection stage. Its checklist follows actual collector events rather than a simulated percentage. Monitoring continues in the background. After you confirm the reviewed payload, a separate interpretation panel shows that Vigil is waiting for DeepSeek. Esc shows cancellation feedback, and failures display an error state rather than appearing as AI findings.
+While collecting, a dedicated panel animates and shows the selected PID, elapsed time, and current OS collection stage. Its checklist follows actual collector events rather than a simulated percentage. Monitoring continues in the background. After you confirm the reviewed payload, a separate interpretation panel shows that Vigil is waiting for the configured intelligence service. Esc shows cancellation feedback, and failures display an error state rather than appearing as AI findings.
 
 Evidence includes:
 
@@ -127,3 +161,11 @@ go vet ./...
 ```
 
 Tests use a local HTTP server and controlled local file/socket fixtures; no real key or paid request is needed.
+
+## Building a release
+
+```sh
+python3 scripts/build_release.py v0.1.0
+```
+
+This cross-compiles six binaries with CGO disabled and creates allowlisted archives plus SHA-256 checksums under `dist/v0.1.0/`. No workspace directories, credentials, or personal config files are archived. Run tests first, commit the sources, create and push the matching version tag, then use `scripts/publish_release.py` with `GH_TOKEN` supplied through the environment to upload a draft and publish it as a prerelease. Published releases are never overwritten by that script.

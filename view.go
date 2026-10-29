@@ -105,7 +105,7 @@ func (m model) metrics(w int) string {
 	cpu := panel("CPU", []string{apart(lipgloss.NewStyle().Foreground(usageColor(m.state.CPU)).Bold(true).Render(fmt.Sprintf("%.1f%%", m.state.CPU)), dim.Render(spark(m.cpuHistory, max(1, card-14))), card-4), meter(m.state.CPU, card-4)}, card, 4)
 	ram := panel("MEMORY", []string{apart(fmt.Sprintf("%.1f%%", m.state.RAM), dim.Render(bytesLabel(m.state.Used)+" / "+bytesLabel(m.state.Total)), card-4), meter(m.state.RAM, card-4)}, card, 4)
 	ai := "AI offline · local inspect ready"
-	if m.ai.key != "" {
+	if m.ai.ready() {
 		ai = "Vigil Intelligence · ready"
 	}
 	if m.busy {
