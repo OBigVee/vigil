@@ -1,0 +1,6 @@
+/vigil
+.env
+.env.*
+!.env.example
+*.test
+coverage.out
