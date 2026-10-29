@@ -9,7 +9,7 @@ The `Platform validation` GitHub Actions workflow builds and runs Vigil on nativ
 | Ubuntu 24.04 | amd64 | current stable | enabled | Linux regression coverage |
 | Ubuntu 24.04 | amd64 | 1.24.x | enabled | Minimum supported Go version |
 | macOS 14 | arm64 | current stable | enabled | Apple Silicon native behavior |
-| macOS 15 Intel | amd64 | current stable | enabled | Intel Mac native behavior |
+| macOS 15 Intel | amd64 | current stable | disabled | Intel Mac shipped no-CGO build mode |
 | Windows 2025 | amd64 | current stable | enabled | Windows native behavior |
 | macOS 14 | arm64 | current stable | disabled | Validate the shipped no-CGO build mode |
 

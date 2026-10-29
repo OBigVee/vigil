@@ -40,11 +40,11 @@ jobs:
             cgo: '1'
             test_flags: '-race'
             smoke_flags: ''
-          - name: macOS amd64 / native CGO
+          - name: macOS amd64 / release no-CGO mode
             runner: macos-15-intel
             go: stable
-            cgo: '1'
-            test_flags: '-race'
+            cgo: '0'
+            test_flags: ''
             smoke_flags: ''
           - name: Windows amd64 / native
             runner: windows-2025
