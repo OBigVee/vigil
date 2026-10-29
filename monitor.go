@@ -14,10 +14,11 @@ import (
 )
 
 type Process struct {
-	PID    int32   `json:"pid"`
-	Name   string  `json:"name"`
-	CPU    float64 `json:"cpu_percent"`
-	Memory float32 `json:"memory_percent"`
+	PID       int32   `json:"pid"`
+	ParentPID int32   `json:"parent_pid"`
+	Name      string  `json:"name"`
+	CPU       float64 `json:"cpu_percent"`
+	Memory    float32 `json:"memory_percent"`
 }
 type Snapshot struct {
 	Time      time.Time `json:"time"`
@@ -81,7 +82,8 @@ func (c *collector) collect() Snapshot {
 					}
 					cp, _ := p.PercentWithContext(ctx, 0)
 					mp, _ := p.MemoryPercentWithContext(ctx)
-					results <- Process{p.Pid, name, cp, mp}
+					parent, _ := p.PpidWithContext(ctx)
+					results <- Process{PID: p.Pid, ParentPID: parent, Name: name, CPU: cp, Memory: mp}
 				}
 			}()
 		}

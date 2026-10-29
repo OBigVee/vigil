@@ -3,21 +3,26 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/joho/godotenv"
 )
 
 type sampleMsg Snapshot
 type tickMsg struct{}
+type workTickMsg struct{ id uint64 }
+type investigationMsg struct {
+	data investigation
+	err  error
+}
 type answerMsg struct {
 	text string
 	err  error
@@ -29,17 +34,39 @@ type model struct {
 	width, height, cursor, offset int
 	sort, filter                  string
 	filtering, paused, busy       bool
+	collecting, localEvidence     bool
+	rawEvidence                   bool
+	hideTree, treeOnly            bool
+	treeOffset                    int
+	evidence                      *investigation
+	cpuHistory, ramHistory        []float64
 	pending, task, answer         string
 	cancel                        context.CancelFunc
+	workID                        uint64
+	workFrame, workStage          int
+	workStarted                   time.Time
+	workProcess                   Process
+	workProgress                  <-chan int
+	cancelling, answerError       bool
+	notice                        string
 }
 
 func (m model) sample() tea.Cmd { return func() tea.Msg { return sampleMsg(m.collector.collect()) } }
 func tick() tea.Cmd             { return tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} }) }
-func (m model) Init() tea.Cmd   { return m.sample() }
+func workTick(id uint64) tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg { return workTickMsg{id} })
+}
+func (m model) Init() tea.Cmd { return m.sample() }
+
+// Names match case-insensitively; PID lookup matches the complete numeric ID.
+func matchesProcess(p Process, query string) bool {
+	query = strings.TrimSpace(query)
+	return query == "" || query == strconv.FormatInt(int64(p.PID), 10) || strings.Contains(strings.ToLower(p.Name), strings.ToLower(query))
+}
 func (m model) rows() []Process {
 	ps := []Process{}
 	for _, p := range m.state.Processes {
-		if strings.Contains(strings.ToLower(p.Name), strings.ToLower(m.filter)) {
+		if matchesProcess(p, m.filter) {
 			ps = append(ps, p)
 		}
 	}
@@ -58,6 +85,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			pid = old[m.cursor].PID
 		}
 		m.state = Snapshot(v)
+		m.cpuHistory = historyAppend(m.cpuHistory, m.state.CPU)
+		m.ramHistory = historyAppend(m.ramHistory, m.state.RAM)
 		for i, p := range m.rows() {
 			if p.PID == pid {
 				m.cursor = i
@@ -70,12 +99,72 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tick()
 		}
 		return m, m.sample()
+	case workTickMsg:
+		if !m.busy || v.id != m.workID {
+			return m, nil
+		}
+		m.workFrame++
+		if m.workProgress != nil {
+			for {
+				select {
+				case stage := <-m.workProgress:
+					m.workStage = stage
+				default:
+					return m, workTick(m.workID)
+				}
+			}
+		}
+		return m, workTick(m.workID)
+	case investigationMsg:
+		m.workProgress = nil
+		m.busy = false
+		m.collecting = false
+		if m.cancel != nil {
+			m.cancel()
+			m.cancel = nil
+		}
+		m.offset = 0
+		if v.err != nil || m.cancelling {
+			if errors.Is(v.err, context.Canceled) || m.cancelling {
+				m.cancelling = false
+				m.notice = "Investigation cancelled. No data was sent."
+				return m, nil
+			}
+			m.answerError = true
+			m.answer = "Investigation: " + v.err.Error()
+			return m, nil
+		}
+		b, err := json.MarshalIndent(v.data, "", "  ")
+		if err != nil {
+			m.answerError = true
+			m.answer = "Could not format investigation."
+			return m, nil
+		}
+		m.answerError = false
+		m.cancelling = false
+		m.pending = string(b)
+		m.evidence = &v.data
+		m.treeOffset = 0
+		m.localEvidence = true
+		m.rawEvidence = false
+		m.task = explanationTask
+		return m, nil
 	case answerMsg:
+		if m.cancel != nil {
+			m.cancel()
+		}
 		m.busy = false
 		m.cancel = nil
-		if v.err != nil {
+		if v.err != nil || m.cancelling {
+			if errors.Is(v.err, context.Canceled) || m.cancelling {
+				m.cancelling = false
+				m.notice = "Interpretation cancelled. The confirmed evidence may already have been submitted."
+				return m, nil
+			}
+			m.answerError = true
 			m.answer = v.err.Error()
 		} else {
+			m.answerError = false
 			m.answer = clean(v.text)
 		}
 		m.offset = 0
@@ -87,28 +176,83 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		}
+		if !m.filtering {
+			switch key {
+			case "t":
+				if m.width >= 100 {
+					m.hideTree = !m.hideTree
+				} else {
+					m.treeOnly = !m.treeOnly
+				}
+				return m, nil
+			case "[":
+				m.treeOffset = max(0, m.treeOffset-1)
+				return m, nil
+			case "]":
+				m.treeOffset++
+				return m, nil
+			}
+		}
+		if m.busy {
+			switch key {
+			case "esc":
+				if m.cancel != nil {
+					m.cancel()
+				}
+				m.cancelling = true
+			case "q":
+				if m.cancel != nil {
+					m.cancel()
+				}
+				return m, tea.Quit
+			}
+			return m, nil
+		}
 		if m.pending != "" {
 			switch key {
 			case "esc", "n":
 				m.pending = ""
+			case "tab":
+				m.rawEvidence = !m.rawEvidence
+				m.offset = 0
+			case "pgdown", "ctrl+d":
+				m.offset += max(1, m.height-15)
+			case "pgup", "ctrl+u":
+				m.offset = max(0, m.offset-max(1, m.height-15))
 			case "down", "j":
 				m.offset++
 			case "up", "k":
 				m.offset = max(0, m.offset-1)
 			case "enter", "y":
+				if m.ai.key == "" {
+					m.answerError = true
+					m.answer = "Configure intelligence access in .env, then restart Vigil. Local inspection works without a key."
+					m.pending = ""
+					return m, nil
+				}
 				payload, task := m.pending, m.task
 				m.pending = ""
 				m.busy = true
+				m.workID++
+				m.workFrame = 0
+				m.workStarted = time.Now()
+				m.cancelling = false
+				m.notice = ""
 				ctx, cancel := context.WithCancel(context.Background())
 				m.cancel = cancel
-				return m, func() tea.Msg { s, e := m.ai.ask(ctx, task, payload); return answerMsg{s, e} }
+				return m, tea.Batch(func() tea.Msg { s, e := m.ai.ask(ctx, task, payload); return answerMsg{s, e} }, workTick(m.workID))
 			}
 			return m, nil
 		}
 		if m.filtering {
 			switch key {
-			case "esc", "enter":
+			case "esc":
+				m.filter = ""
 				m.filtering = false
+			case "enter":
+				m.filtering = false
+			case "ctrl+u":
+				m.filter = ""
 			case "backspace":
 				r := []rune(m.filter)
 				if len(r) > 0 {
@@ -130,6 +274,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch key {
 			case "esc":
 				m.answer = ""
+			case "pgdown", "ctrl+d":
+				m.offset += max(1, m.height-15)
+			case "pgup", "ctrl+u":
+				m.offset = max(0, m.offset-max(1, m.height-15))
 			case "j", "down":
 				m.offset++
 			case "k", "up":
@@ -165,36 +313,64 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "n":
 			m.sort = "name"
 			m.cursor = 0
-		case "e", "d", "a":
+		case "i", "e":
+			if m.busy {
+				return m, nil
+			}
+			ps := m.rows()
+			if len(ps) == 0 {
+				return m, nil
+			}
+			selected := ps[min(m.cursor, len(ps)-1)]
+			m.localEvidence = false
+			m.treeOffset = 0
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			m.cancel = cancel
+			m.busy = true
+			m.collecting = true
+			m.workID++
+			m.workFrame = 0
+			m.workStage = 0
+			m.workStarted = time.Now()
+			m.workProcess = selected
+			m.cancelling = false
+			m.notice = ""
+			m.answerError = false
+			m.treeOnly = false
+			progress := make(chan int, 16)
+			m.workProgress = progress
+			return m, tea.Batch(func() tea.Msg {
+				d, err := investigate(ctx, selected.PID, func(stage int) {
+					select {
+					case progress <- stage:
+					default:
+					}
+				})
+				return investigationMsg{d, err}
+			}, workTick(m.workID))
+		case "d", "a":
 			if m.busy {
 				return m, nil
 			}
 			if m.ai.key == "" {
-				m.answer = "Set DEEPSEEK_API_KEY in your environment, then restart Vigil."
+				m.answerError = true
+				m.answer = "Configure intelligence access in .env, then restart Vigil."
 				return m, nil
 			}
 			var payload any
-			if key == "e" {
-				ps := m.rows()
-				if len(ps) == 0 {
-					return m, nil
-				}
-				m.cursor = min(m.cursor, len(ps)-1)
-				payload = ps[m.cursor]
-				m.task = "Explain this process name, its usual purpose, and how to verify its identity. A name alone is not proof of identity."
-			} else {
-				s := m.state
-				s.Processes = append([]Process(nil), s.Processes...)
-				sortProcesses(s.Processes, "cpu")
-				if len(s.Processes) > 30 {
-					s.Processes = s.Processes[:30]
-				}
-				payload = s
-				m.task = "Assess this snapshot for resource pressure and possible causes of slowness. Explain missing evidence."
-				if key == "a" {
-					m.task = "Triage unusual resource usage and potentially suspicious process names. No trusted baseline is available. Do not infer malware from names alone. Suggest evidence to collect."
-				}
+			s := m.state
+			s.Processes = append([]Process(nil), s.Processes...)
+			sortProcesses(s.Processes, "cpu")
+			if len(s.Processes) > 30 {
+				s.Processes = s.Processes[:30]
 			}
+			payload = s
+			m.localEvidence = false
+			m.task = "Assess this snapshot for resource pressure and possible causes of slowness. Explain missing evidence."
+			if key == "a" {
+				m.task = "Triage unusual resource usage and potentially suspicious process names. No trusted baseline is available. Do not infer malware from names alone. Suggest evidence to collect."
+			}
+
 			b, _ := json.MarshalIndent(payload, "", "  ")
 			m.pending = string(b)
 			m.offset = 0
@@ -215,87 +391,39 @@ func clean(s string) string {
 	}, s)
 }
 
-var accent = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true)
-
-func (m model) View() string {
-	w, h := m.width, m.height
-	if w == 0 {
-		w = 90
-	}
-	if h == 0 {
-		h = 28
-	}
-	if w < 48 || h < 12 {
-		return "Vigil: enlarge terminal to at least 48 × 12. q to quit."
-	}
-	var b strings.Builder
-	b.WriteString(accent.Render("VIGIL  /  SYSTEM INTELLIGENCE") + "\n")
-	status := "LIVE"
-	if m.paused {
-		status = "PAUSED"
-	}
-	if m.state.Time.IsZero() {
-		status = "SAMPLING"
-	}
-	fmt.Fprintf(&b, "%s  CPU %5.1f%%  RAM %5.1f%%  %s / %s\n", status, m.state.CPU, m.state.RAM, bytesLabel(m.state.Used), bytesLabel(m.state.Total))
-	fmt.Fprintf(&b, "%d processes • sort: %s • filter: %s\n", len(m.state.Processes), m.sort, clean(m.filter))
-	if m.pending != "" {
-		b.WriteString(accent.Render("REVIEW DATA → DEEPSEEK (API charges may apply)") + "\n")
-		b.WriteString("Only the JSON below is sent with diagnostic instructions.\n")
-		lines := strings.Split(m.pending, "\n")
-		start := min(m.offset, max(0, len(lines)-(h-8)))
-		for _, l := range lines[start:min(len(lines), start+h-8)] {
-			b.WriteString(ansi.Truncate(clean(l), w, "") + "\n")
-		}
-		if len(lines) > h-8 {
-			b.WriteString("↑/↓ scroll to review the full payload.\n")
-		}
-		b.WriteString("Enter/y send • Esc/n cancel • ↑/↓ scroll")
-	} else if m.answer != "" {
-		b.WriteString(accent.Render("DIAGNOSTIC • AI output requires verification") + "\n")
-		lines := strings.Split(ansi.Wrap(m.answer, w, ""), "\n")
-		start := min(m.offset, max(0, len(lines)-(h-7)))
-		for _, l := range lines[start:min(len(lines), start+h-7)] {
-			b.WriteString(l + "\n")
-		}
-		b.WriteString("↑/↓ scroll • Esc back • q quit")
-	} else {
-		b.WriteString(accent.Render(fmt.Sprintf("  %-8s %7s %7s  %s", "PID", "CPU%", "MEM%", "PROCESS")) + "\n")
-		ps := m.rows()
-		count := h - 8
-		start := max(0, m.cursor-count+1)
-		for i := start; i < min(len(ps), start+count); i++ {
-			p := ps[i]
-			mark := " "
-			if i == m.cursor {
-				mark = "›"
-			}
-			line := fmt.Sprintf("%s %-8d %7.1f %7.2f  %s", mark, p.PID, p.CPU, p.Memory, clean(p.Name))
-			line = ansi.Truncate(line, w, "")
-			if i == m.cursor {
-				line = accent.Render(line)
-			}
-			b.WriteString(line + "\n")
-		}
-		if m.state.Warning != "" {
-			b.WriteString(ansi.Truncate(clean(m.state.Warning), w, "") + "\n")
-		}
-		if m.busy {
-			b.WriteString("DeepSeek is analyzing… Esc cancels\n")
-		}
-		b.WriteString("↑↓ select • c/m/n sort • / filter • Space pause\n")
-		b.WriteString("e explain • d diagnose • a triage • q quit")
-	}
-	return b.String()
-}
 func main() {
 	snapshot := flag.Bool("snapshot", false, "print a JSON snapshot and exit")
+	search := flag.String("search", "", "filter processes by name or exact PID")
+	inspectPID := flag.Int("inspect", 0, "collect local evidence for a PID as JSON, without an AI request")
 	flag.Parse()
+	if *inspectPID != 0 {
+		if *inspectPID < 1 || int64(*inspectPID) > 2147483647 {
+			fmt.Fprintln(os.Stderr, "Vigil: invalid PID")
+			os.Exit(1)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		d, err := investigate(ctx, int32(*inspectPID))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Vigil:", err)
+			os.Exit(1)
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(d); err != nil {
+			fmt.Fprintln(os.Stderr, "Vigil:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	c := &collector{}
 	if *snapshot {
 		c.collect()
 		time.Sleep(time.Second)
 		s := c.collect()
+		if strings.TrimSpace(*search) != "" {
+			s.Processes = (model{state: s, filter: *search, sort: "cpu"}).rows()
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		if e := enc.Encode(s); e != nil {
@@ -308,7 +436,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Vigil: could not load .env; check its permissions and KEY=value syntax")
 		os.Exit(1)
 	}
-	m := model{collector: c, ai: newAIClient(), sort: "cpu"}
+	m := model{collector: c, ai: newAIClient(), sort: "cpu", filter: strings.TrimSpace(*search)}
 	if _, e := tea.NewProgram(m, tea.WithAltScreen()).Run(); e != nil {
 		fmt.Fprintln(os.Stderr, "Vigil:", e)
 		os.Exit(1)

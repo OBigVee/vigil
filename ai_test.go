@@ -59,11 +59,17 @@ func TestAIFailures(t *testing.T) {
 	}
 }
 func TestReviewBeforeSend(t *testing.T) {
-	m := model{ai: aiClient{key: "test"}, sort: "cpu", state: Snapshot{Processes: []Process{{PID: 1, Name: "example"}}}}
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m := model{sort: "cpu", state: Snapshot{Processes: []Process{{PID: 1, Name: "example"}}}}
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m = next.(model)
+	if cmd == nil || !m.collecting || m.pending != "" {
+		t.Fatal("inspection must run asynchronously without an API key")
+	}
+	defer m.cancel()
+	next, cmd = m.Update(investigationMsg{data: investigation{Process: relatedProcess{PID: 1, Name: "example"}}})
 	m = next.(model)
 	if cmd != nil || m.pending == "" || m.busy {
-		t.Fatal("request must wait for review")
+		t.Fatal("evidence must wait for review")
 	}
 	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if cmd != nil || next.(model).pending != "" {
@@ -96,5 +102,45 @@ func TestCollector(t *testing.T) {
 	}
 	if second.CPU < 0 || second.CPU > 100 {
 		t.Fatalf("invalid aggregate CPU: %v", second.CPU)
+	}
+}
+
+func TestMachineEvidenceForwardedAfterReview(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var body struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if len(body.Messages) != 2 || !strings.Contains(body.Messages[1].Content, "/opt/example/agent") || !strings.Contains(body.Messages[1].Content, "particular process instance") {
+			t.Error("machine evidence or explanation task missing")
+		}
+		w.Write([]byte(`{"choices":[{"message":{"content":"This instance runs /opt/example/agent."}}]}`))
+	}))
+	defer server.Close()
+	m := model{ai: aiClient{"test", "test-model", server.URL, server.Client()}}
+	next, cmd := m.Update(investigationMsg{data: investigation{Process: relatedProcess{PID: 42, Name: "agent", Executable: "/opt/example/agent"}}})
+	m = next.(model)
+	if cmd != nil || calls != 0 {
+		t.Fatal("review must not send a request")
+	}
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if cmd == nil || !m.busy {
+		t.Fatal("confirmation should start request")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatal("expected API request and animation tick")
+	}
+	result := batch[0]()
+	next, _ = m.Update(result)
+	if calls != 1 || !strings.Contains(next.(model).answer, "/opt/example/agent") {
+		t.Fatal("expected the reviewed evidence explanation")
 	}
 }
