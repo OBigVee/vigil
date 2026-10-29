@@ -28,7 +28,7 @@ type Snapshot struct {
 	Used      uint64    `json:"used_memory_bytes"`
 	Total     uint64    `json:"total_memory_bytes"`
 	Processes []Process `json:"processes"`
-	Warning   string    `json:"-"`
+	Warning   string    `json:"collection_warning,omitempty"`
 }
 
 // A collector owns previous samples. Only one collection runs at a time.

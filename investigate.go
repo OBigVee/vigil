@@ -75,6 +75,9 @@ func investigate(ctx context.Context, pid int32, progress ...func(int)) (investi
 		}
 	}
 	report(0)
+	if err := ctx.Err(); err != nil {
+		return investigation{}, err
+	}
 	d := investigation{Captured: time.Now(), Machine: machineEvidence{OS: runtime.GOOS, Arch: runtime.GOARCH, LogicalCPUs: runtime.NumCPU()}, Ancestors: []relatedProcess{}, Children: []relatedProcess{}, Siblings: []relatedProcess{}, OpenFiles: []string{}, Libraries: []string{}, Cgroups: []string{}, Connections: []socketEvidence{}, Notes: []string{}}
 	p, e := process.NewProcessWithContext(ctx, pid)
 	if e != nil {

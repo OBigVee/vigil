@@ -1,0 +1,57 @@
+# Platform validation
+
+The `Platform validation` GitHub Actions workflow builds and runs Vigil on native OS runners. It runs on feature/fix branch pushes, pull requests, main, and manual dispatch. No LLM keys, private machine data, or elevated process privileges are required. The workflow uses read-only repository permissions and pinned action commits.
+
+## Automated matrix
+
+| Runner | Architecture | Go | CGO | Purpose |
+| --- | --- | --- | --- | --- |
+| Ubuntu 24.04 | amd64 | current stable | enabled | Linux regression coverage |
+| Ubuntu 24.04 | amd64 | 1.24.x | enabled | Minimum supported Go version |
+| macOS 14 | arm64 | current stable | enabled | Apple Silicon native behavior |
+| macOS 15 Intel | amd64 | current stable | enabled | Intel Mac native behavior |
+| Windows 2025 | amd64 | current stable | enabled | Windows native behavior |
+| macOS 14 | arm64 | current stable | disabled | Reproduce the v0.1.0 release build mode |
+
+Race detection runs in CGO-enabled jobs; the no-CGO job runs ordinary tests. These jobs do not validate Linux arm64 or Windows arm64 runtime behavior yet. Compiling a release for those architectures is not proof that it runs correctly.
+
+Each job verifies dependency checksums, runs vet and tests, builds an executable, and exercises its version, config setup, snapshot output and search behavior. OS integration tests use the test process itself, a temporary file, a loopback listener, and a controlled child Go process. They check process identity, resource collection, ancestry and child relationships. Paths are compared after resolving symlinks, with Windows case normalization.
+
+Linux fixture files, sockets and working directories must be found. On other platforms, unavailable fields must be explicitly reported in collection notes; successful calls with silently missing fixture data fail validation. Unsupported aggregate CPU is accepted only in the explicitly named macOS no-CGO lane. It must produce a collection warning; zero without a warning is not accepted. These allowances describe capabilities, not full feature parity.
+
+The executable smoke test emits only an OS/architecture/capability summary. It does not print other process names, files, endpoints, configuration contents or environment variables. It never requests an AI interpretation. Full integration test logs may contain test fixture paths in failure messages; do not submit private investigation reports as CI artifacts.
+
+## Run locally
+
+```sh
+go test -race -count=1 -timeout=4m ./...
+go vet ./...
+go build -ldflags '-X main.version=platform-validation' -o dist/platform-validation/vigil .
+python3 scripts/validate_platform.py --binary dist/platform-validation/vigil
+```
+
+On Windows, add `.exe` to the binary name and use an installed Python interpreter. Race tests require a supported C compiler. For a deliberate no-CGO macOS check, set `CGO_ENABLED=0`, omit `-race`, and pass `--allow-missing-cpu` to the smoke script.
+
+## Known gaps and next collector work
+
+The pinned gopsutil v3 dependency returns unsupported errors for aggregate CPU and current working directory on macOS without CGO, and open-file collection on macOS is unimplemented even with CGO. v0.1.0 was cross-built with CGO disabled. Keep those published binaries experimental. The CI native macOS jobs enable CGO to separate build-mode limitations from remaining collector limitations; this workflow does not replace the release build pipeline.
+
+After examining actual native job results, use focused follow-up branches:
+
+- `fix/macos-collector`: native release builds or a validated dependency upgrade; fill macOS evidence gaps.
+- `fix/windows-collector`: address observed permission/path/socket/service issues.
+- A future release pipeline should run each shipped binary's checks on its target OS before publication. Publish fixes under a new version rather than replacing v0.1.0 assets.
+
+## Manual desktop checks
+
+CI does not exercise a user's interactive desktop session. On each target machine:
+
+1. Start Vigil in a normal modern terminal without administrator/root privileges.
+2. Check CPU and RAM against Activity Monitor, Task Manager, or a Linux monitor over similar sample intervals. Account for multicore per-process CPU normalization.
+3. Search by name and exact PID; inspect a process owned by the current user.
+4. Confirm its executable, working directory, process family, known open file and local listener against independently observable fixtures.
+5. Try a restricted process; unavailable data must be labeled rather than fabricated.
+6. Resize the terminal; test tree toggling and scrolling, evidence overview/JSON, inspection progress, cancellation and exit.
+7. Confirm local monitoring works without an API key. Optional real API testing requires the tester's own key and explicit evidence confirmation.
+
+Record OS version, CPU architecture, terminal, Vigil version, the expected observation, actual result and sanitized collection notes. Never include API keys, full environment dumps, or private raw process payloads in issue reports.

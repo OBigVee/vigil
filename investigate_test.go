@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -14,9 +15,6 @@ import (
 )
 
 func TestInvestigateCurrentProcess(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Linux evidence integration")
-	}
 	f, err := os.CreateTemp(t.TempDir(), "vigil-evidence-")
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +25,7 @@ func TestInvestigateCurrentProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	stages := []int{}
 	d, err := investigate(ctx, int32(os.Getpid()), func(stage int) { stages = append(stages, stage) })
@@ -44,17 +42,36 @@ func TestInvestigateCurrentProcess(t *testing.T) {
 	}
 	exe, _ := os.Executable()
 	cwd, _ := os.Getwd()
-	if d.Process.Executable != exe || d.WorkingDirectory != cwd || d.Process.Name == "" || d.Started == nil {
-		t.Fatal("missing process identity or directory evidence")
+	if d.Process.PID != int32(os.Getpid()) || d.Process.Name == "" || d.Started == nil {
+		t.Fatal("missing process identity")
 	}
+	if d.Process.Executable == "" {
+		t.Fatal("own executable path must be available")
+	}
+	if !sameFilePath(d.Process.Executable, exe) {
+		t.Fatal("wrong executable path")
+	}
+	if hasCollectionNote(d.Notes, "working_directory:") {
+		if runtime.GOOS == "linux" {
+			t.Fatal("working directory unexpectedly unavailable")
+		}
+		t.Log("working directory reported unavailable on this platform")
+	} else if !sameFilePath(d.WorkingDirectory, cwd) {
+		t.Fatal("wrong or silently missing working directory")
+	}
+
 	found := false
 	for _, path := range d.OpenFiles {
-		if path == f.Name() {
+		if sameFilePath(path, f.Name()) {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatal("open fixture file not observed")
+		if runtime.GOOS != "linux" && hasCollectionNote(d.Notes, "open_files:") {
+			t.Log("open files reported unavailable on this platform")
+		} else {
+			t.Fatal("open fixture file not observed or reported unavailable")
+		}
 	}
 	port := uint32(listener.Addr().(*net.TCPAddr).Port)
 	found = false
@@ -64,7 +81,11 @@ func TestInvestigateCurrentProcess(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("fixture listener not observed")
+		if runtime.GOOS != "linux" && hasCollectionNote(d.Notes, "connections:") {
+			t.Log("socket ownership reported unavailable on this platform")
+		} else {
+			t.Fatal("fixture listener not observed or reported unavailable")
+		}
 	}
 	if len(d.Ancestors) == 0 {
 		t.Fatal("expected launcher ancestry")
@@ -115,4 +136,30 @@ func TestLimitedRead(t *testing.T) {
 	if b, err := readLimited(path, 5); err != nil || string(b) != "12345" {
 		t.Fatal("exact-limit read failed")
 	}
+}
+
+func sameFilePath(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if path, err := filepath.EvalSymlinks(a); err == nil {
+		a = path
+	}
+	if path, err := filepath.EvalSymlinks(b); err == nil {
+		b = path
+	}
+	a = filepath.Clean(a)
+	b = filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+func hasCollectionNote(notes []string, prefix string) bool {
+	for _, note := range notes {
+		if strings.HasPrefix(note, prefix) {
+			return true
+		}
+	}
+	return false
 }

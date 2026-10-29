@@ -1,0 +1,88 @@
+name: Platform validation
+
+on:
+  push:
+    branches: [main, 'feature/**', 'fix/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux amd64 / current Go
+            runner: ubuntu-24.04
+            go: stable
+            cgo: '1'
+            test_flags: '-race'
+            smoke_flags: ''
+          - name: Linux amd64 / minimum Go
+            runner: ubuntu-24.04
+            go: '1.24.x'
+            cgo: '1'
+            test_flags: '-race'
+            smoke_flags: ''
+          - name: macOS arm64 / native CGO
+            runner: macos-14
+            go: stable
+            cgo: '1'
+            test_flags: '-race'
+            smoke_flags: ''
+          - name: macOS amd64 / native CGO
+            runner: macos-15-intel
+            go: stable
+            cgo: '1'
+            test_flags: '-race'
+            smoke_flags: ''
+          - name: Windows amd64 / native
+            runner: windows-2025
+            go: stable
+            cgo: '1'
+            test_flags: '-race'
+            smoke_flags: ''
+          - name: macOS arm64 / v0.1.0 no-CGO mode
+            runner: macos-14
+            go: stable
+            cgo: '0'
+            test_flags: ''
+            smoke_flags: '--allow-missing-cpu'
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ matrix.go }}
+      - name: Record native toolchain
+        run: |
+          go version
+          go env GOOS GOARCH CGO_ENABLED CC
+      - name: Verify module checksums
+        run: go mod verify
+      - name: Static checks
+        run: go vet ./...
+      - name: Unit and controlled OS integration tests
+        run: go test ${{ matrix.test_flags }} -count=1 -timeout=4m -v ./...
+      - name: Build native executable
+        run: go build -trimpath -ldflags '-X main.version=platform-validation' -o "dist/platform-validation/vigil$(go env GOEXE)" .
+      - name: Exercise executable and setup without API keys
+        run: python scripts/validate_platform.py --binary "dist/platform-validation/vigil$(go env GOEXE)" ${{ matrix.smoke_flags }}
