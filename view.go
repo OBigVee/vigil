@@ -176,6 +176,17 @@ func evidenceSummary(raw string) string {
 		lines = append(lines, "Started: "+d.Started.Format("2006-01-02 15:04:05 MST"))
 	}
 	lines = append(lines, fmt.Sprintf("CPU: %.1f%% over %.2fs  ·  Resident memory: %s", d.CPU, d.SampleSeconds, bytesLabel(d.ResidentBytes)), "", "PROCESS FAMILY")
+	if h := d.History; h != nil && len(h.Samples) >= 2 {
+		cpuValues, memoryValues := []float64{}, []float64{}
+		for _, sample := range h.Samples {
+			cpuValues = append(cpuValues, sample.CPU)
+			memoryValues = append(memoryValues, sample.Memory)
+		}
+		// Keep each graph within a conventional terminal width; the outer view wraps text.
+		lines = append(lines[:len(lines)-1], "SESSION TRENDS", fmt.Sprintf("%d observations · %s to %s", len(h.Samples), h.Samples[0].Time.Format("15:04:05"), h.Samples[len(h.Samples)-1].Time.Format("15:04:05")), "CPU    "+trendSpark(cpuValues), fmt.Sprintf("CPU average %.1f%% · peak %.1f%% (100%% = one logical CPU)", h.AverageCPU, h.PeakCPU), "Memory "+trendSpark(memoryValues), fmt.Sprintf("Memory change %+.2f percentage points of system RAM", h.MemoryChange), "Graphs use independent relative scales. Gaps may include pauses or unavailable metrics.", "", "PROCESS FAMILY")
+	} else {
+		lines = append(lines[:len(lines)-1], "Session trends: gathering observations; allow several refreshes before inspecting.", "", "PROCESS FAMILY")
+	}
 	for _, group := range []struct {
 		name string
 		ps   []relatedProcess

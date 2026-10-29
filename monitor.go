@@ -14,11 +14,13 @@ import (
 )
 
 type Process struct {
-	PID       int32   `json:"pid"`
-	ParentPID int32   `json:"parent_pid"`
-	Name      string  `json:"name"`
-	CPU       float64 `json:"cpu_percent"`
-	Memory    float32 `json:"memory_percent"`
+	StartedMS    int64   `json:"started_at_unix_ms,omitempty"`
+	MetricsValid bool    `json:"-"`
+	PID          int32   `json:"pid"`
+	ParentPID    int32   `json:"parent_pid"`
+	Name         string  `json:"name"`
+	CPU          float64 `json:"cpu_percent"`
+	Memory       float32 `json:"memory_percent"`
 }
 type Snapshot struct {
 	Time      time.Time `json:"time"`
@@ -80,16 +82,21 @@ func (c *collector) collect() Snapshot {
 					if e != nil {
 						continue
 					}
-					cp, _ := p.PercentWithContext(ctx, 0)
-					mp, _ := p.MemoryPercentWithContext(ctx)
+					birth, birthErr := p.CreateTimeWithContext(ctx)
+					cp, cpuErr := p.PercentWithContext(ctx, 0)
+					mp, memoryErr := p.MemoryPercentWithContext(ctx)
 					parent, _ := p.PpidWithContext(ctx)
-					results <- Process{PID: p.Pid, ParentPID: parent, Name: name, CPU: cp, Memory: mp}
+					results <- Process{StartedMS: birth, MetricsValid: birthErr == nil && cpuErr == nil && memoryErr == nil, PID: p.Pid, ParentPID: parent, Name: name, CPU: cp, Memory: mp}
 				}
 			}()
 		}
 		for _, p := range ps {
 			if old, ok := c.previous[p.Pid]; ok {
-				p = old
+				birth, err := p.CreateTimeWithContext(ctx)
+				previousBirth, previousErr := old.CreateTimeWithContext(ctx)
+				if err == nil && previousErr == nil && birth == previousBirth {
+					p = old
+				}
 			}
 			next[p.Pid] = p
 			jobs <- p

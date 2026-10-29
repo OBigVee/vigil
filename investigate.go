@@ -19,7 +19,7 @@ import (
 	"github.com/shirou/gopsutil/v4/process"
 )
 
-const explanationTask = `Explain this particular process instance on this machine using the collected evidence, not a generic process-name description. Start with a concrete summary of what this instance is doing. Then explain its observed software identity, launcher/ancestors, children and siblings, working directory, open files, mapped files, service cgroup, and sockets where evidence exists. Cite JSON field names and actual paths/PIDs/endpoints for important claims. Explain how these observations connect; distinguish observed relationships from hypotheses. An ancestor is a launcher, a sibling only shares a parent, a mapped file may be code or data, and only an observed_local_peer identifies a local peer process; other remote socket addresses do not identify software. Do not invent file contents, paired devices, network peers, or causality. Empty, unavailable, and truncated evidence are different. Explain relevant gaps briefly. Avoid generic verification checklists when the data already answers the question. End with at most two specific read-only next steps if needed.`
+const explanationTask = `Explain this particular process instance on this machine using the collected evidence, not a generic process-name description. Start with a concrete summary of what this instance is doing. Then explain its observed software identity, launcher/ancestors, children and siblings, working directory, open files, mapped files, service cgroup, and sockets where evidence exists. Cite JSON field names and actual paths/PIDs/endpoints for important claims. Explain how these observations connect; distinguish observed relationships from hypotheses. An ancestor is a launcher, a sibling only shares a parent, a mapped file may be code or data, and only an observed_local_peer identifies a local peer process; other remote socket addresses do not identify software. Do not invent file contents, paired devices, network peers, or causality. Empty, unavailable, and truncated evidence are different. Explain relevant gaps briefly. Avoid generic verification checklists when the data already answers the question. When session_history exists, describe its observed CPU and memory changes over its actual timestamps; these are session observations, not a trusted baseline or proof of causality. CPU percentages use one logical CPU as 100% and may exceed 100%. Missing history does not imply stable behavior. End with at most two specific read-only next steps if needed.`
 
 type relatedProcess struct {
 	PID        int32  `json:"pid"`
@@ -42,6 +42,7 @@ type machineEvidence struct {
 	LogicalCPUs int    `json:"logical_cpus"`
 }
 type investigation struct {
+	History          *processTrend    `json:"session_history,omitempty"`
 	Captured         time.Time        `json:"captured_at"`
 	Machine          machineEvidence  `json:"machine"`
 	Process          relatedProcess   `json:"process"`

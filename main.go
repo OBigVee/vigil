@@ -27,6 +27,7 @@ type answerMsg struct {
 	err  error
 }
 type model struct {
+	histories                     processHistories
 	collector                     *collector
 	ai                            aiClient
 	state                         Snapshot
@@ -84,6 +85,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			pid = old[m.cursor].PID
 		}
 		m.state = Snapshot(v)
+		m.histories.record(m.state)
 		m.cpuHistory = historyAppend(m.cpuHistory, m.state.CPU)
 		m.ramHistory = historyAppend(m.ramHistory, m.state.RAM)
 		for i, p := range m.rows() {
@@ -133,6 +135,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.answer = "Investigation: " + v.err.Error()
 			return m, nil
 		}
+		v.data.History = m.histories.forInvestigation(v.data)
 		b, err := json.MarshalIndent(v.data, "", "  ")
 		if err != nil {
 			m.answerError = true
