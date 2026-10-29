@@ -19,7 +19,7 @@ import (
 	"github.com/shirou/gopsutil/v4/process"
 )
 
-const explanationTask = `Explain this particular process instance on this machine using the collected evidence, not a generic process-name description. Start with a concrete summary of what this instance is doing. Then explain its observed software identity, launcher/ancestors, children and siblings, working directory, open files, mapped files, service cgroup, and sockets where evidence exists. Cite JSON field names and actual paths/PIDs/endpoints for important claims. Explain how these observations connect; distinguish observed relationships from hypotheses. An ancestor is a launcher, a sibling only shares a parent, a mapped file may be code or data, and only an observed_local_peer identifies a local peer process; other remote socket addresses do not identify software. Do not invent file contents, paired devices, network peers, or causality. Empty, unavailable, and truncated evidence are different. Explain relevant gaps briefly. Avoid generic verification checklists when the data already answers the question. When session_history exists, describe its observed CPU and memory changes over its actual timestamps; these are session observations, not a trusted baseline or proof of causality. CPU percentages use one logical CPU as 100% and may exceed 100%. Missing history does not imply stable behavior. End with at most two specific read-only next steps if needed.`
+const explanationTask = `Explain this particular process instance on this machine using the collected evidence, not a generic process-name description. Start with a concrete summary of what this instance is doing. Then explain its observed software identity, launcher/ancestors, children and siblings, working directory, open files, mapped files, service cgroup, and sockets where evidence exists. Cite JSON field names and actual paths/PIDs/endpoints for important claims. Explain how these observations connect; distinguish observed relationships from hypotheses. An ancestor is a launcher, a sibling only shares a parent, a mapped file may be code or data, and an observed_local_peer identifies a TCP peer, unix_socket_peers records kernel-reported connected inodes and visible descriptor owners (possibly shared/inherited), and family_network records a relative's own internet sockets, not communication with the selected process; other remote socket addresses do not identify software. Do not invent file contents, paired devices, network peers, or causality. Empty, unavailable, and truncated evidence are different. Explain relevant gaps briefly. Avoid generic verification checklists when the data already answers the question. When session_history exists, describe its observed CPU and memory changes over its actual timestamps; these are session observations, not a trusted baseline or proof of causality. CPU percentages use one logical CPU as 100% and may exceed 100%. Missing history does not imply stable behavior. End with at most two specific read-only next steps if needed.`
 
 type relatedProcess struct {
 	PID        int32  `json:"pid"`
@@ -42,25 +42,27 @@ type machineEvidence struct {
 	LogicalCPUs int    `json:"logical_cpus"`
 }
 type investigation struct {
-	History          *processTrend    `json:"session_history,omitempty"`
-	Captured         time.Time        `json:"captured_at"`
-	Machine          machineEvidence  `json:"machine"`
-	Process          relatedProcess   `json:"process"`
-	Owner            string           `json:"owner,omitempty"`
-	Started          *time.Time       `json:"started_at,omitempty"`
-	WorkingDirectory string           `json:"working_directory,omitempty"`
-	Package          string           `json:"installed_package,omitempty"`
-	CPU              float64          `json:"cpu_percent_over_sample"`
-	SampleSeconds    float64          `json:"sample_seconds"`
-	ResidentBytes    uint64           `json:"resident_memory_bytes"`
-	Ancestors        []relatedProcess `json:"ancestors"`
-	Children         []relatedProcess `json:"children"`
-	Siblings         []relatedProcess `json:"siblings"`
-	OpenFiles        []string         `json:"open_files"`
-	Libraries        []string         `json:"mapped_files"`
-	Cgroups          []string         `json:"linux_cgroups"`
-	Connections      []socketEvidence `json:"connections"`
-	Notes            []string         `json:"collection_notes"`
+	UnixPeers        []unixPeerEvidence      `json:"unix_socket_peers,omitempty"`
+	FamilyNetwork    []familyNetworkEvidence `json:"family_network,omitempty"`
+	History          *processTrend           `json:"session_history,omitempty"`
+	Captured         time.Time               `json:"captured_at"`
+	Machine          machineEvidence         `json:"machine"`
+	Process          relatedProcess          `json:"process"`
+	Owner            string                  `json:"owner,omitempty"`
+	Started          *time.Time              `json:"started_at,omitempty"`
+	WorkingDirectory string                  `json:"working_directory,omitempty"`
+	Package          string                  `json:"installed_package,omitempty"`
+	CPU              float64                 `json:"cpu_percent_over_sample"`
+	SampleSeconds    float64                 `json:"sample_seconds"`
+	ResidentBytes    uint64                  `json:"resident_memory_bytes"`
+	Ancestors        []relatedProcess        `json:"ancestors"`
+	Children         []relatedProcess        `json:"children"`
+	Siblings         []relatedProcess        `json:"siblings"`
+	OpenFiles        []string                `json:"open_files"`
+	Libraries        []string                `json:"mapped_files"`
+	Cgroups          []string                `json:"linux_cgroups"`
+	Connections      []socketEvidence        `json:"connections"`
+	Notes            []string                `json:"collection_notes"`
 }
 
 func processIdentity(ctx context.Context, p *process.Process) relatedProcess {
@@ -194,19 +196,7 @@ func investigate(ctx context.Context, pid int32, progress ...func(int)) (investi
 		sockets = sockets[:64]
 	}
 	for _, s := range sockets {
-		protocol := "unknown"
-		switch s.Family {
-		case 1:
-			protocol = "unix"
-		case 2, 10:
-			switch s.Type {
-			case 1:
-				protocol = "tcp"
-			case 2:
-				protocol = "udp"
-			}
-		}
-		d.Connections = append(d.Connections, socketEvidence{Protocol: protocol, Local: s.Laddr, Remote: s.Raddr, State: s.Status})
+		d.Connections = append(d.Connections, socketRecord(s))
 	}
 	if needsLocalPeers(sockets) {
 		all, peerErr := gnet.ConnectionsWithContext(ctx, "inet")
@@ -216,6 +206,8 @@ func investigate(ctx context.Context, pid int32, progress ...func(int)) (investi
 		}
 		d.Notes = append(d.Notes, "Local TCP peers require a reverse socket tuple and visible process ownership; unmatched endpoints do not prove no peer exists. Connections can change during collection.")
 	}
+	collectUnixPeers(ctx, &d, ps)
+	collectFamilyNetwork(ctx, &d)
 	report(5)
 	d.Package, err = packageOwner(ctx, d.Process.Executable)
 	note("installed_package", err)

@@ -216,6 +216,29 @@ func evidenceSummary(raw string) string {
 	if len(d.Connections) == 0 {
 		lines = append(lines, "No entries returned; check collection notes.")
 	}
+	lines = append(lines, "", "UNIX SOCKET PEERS · descriptor ownership")
+	for _, peer := range d.UnixPeers {
+		lines = append(lines, fmt.Sprintf("inode %d (%s) ↔ inode %d (%s)", peer.LocalInode, peer.LocalPath, peer.PeerInode, peer.PeerPath))
+		if len(peer.Owners) == 0 {
+			lines = append(lines, "  Peer descriptor owner unavailable.")
+		}
+		for _, owner := range peer.Owners {
+			lines = append(lines, fmt.Sprintf("  Held by %s [%d] · %s", owner.Name, owner.PID, owner.Executable))
+		}
+	}
+	if len(d.UnixPeers) == 0 {
+		lines = append(lines, "No connected Unix peers resolved; see collection notes.")
+	}
+	lines = append(lines, "", "RELATIVES' NETWORK ACTIVITY · not proof of communication")
+	for _, entry := range d.FamilyNetwork {
+		lines = append(lines, fmt.Sprintf("%s · %s [%d]", entry.Relationship, entry.Process.Name, entry.Process.PID))
+		for _, c := range entry.Connections {
+			lines = append(lines, fmt.Sprintf("  %s %s:%d → %s:%d %s", c.Protocol, c.Local.IP, c.Local.Port, c.Remote.IP, c.Remote.Port, c.State))
+		}
+		if len(entry.Connections) == 0 {
+			lines = append(lines, "  No internet socket entries returned.")
+		}
+	}
 	lines = append(lines, "", "COLLECTION NOTES")
 	lines = append(lines, d.Notes...)
 	lines = append(lines, "", "MACHINE", fmt.Sprintf("%s %s · %s · %d logical CPUs", d.Machine.Platform, d.Machine.Version, d.Machine.Arch, d.Machine.LogicalCPUs), "Captured: "+d.Captured.Format("2006-01-02 15:04:05 MST"))

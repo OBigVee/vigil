@@ -29,7 +29,7 @@ func (m model) treeLines() []string {
 	ancestors := []relatedProcess{}
 	children := []relatedProcess{}
 	siblings := []relatedProcess{}
-	lines := []string{dim.Render("↓ parent → child"), dim.Render("↔ observed local TCP peer"), ""}
+	lines := []string{dim.Render("↓ parent → child"), dim.Render("↔ observed socket peer / owner"), ""}
 	if useEvidence {
 		d := m.evidence
 		selected = Process{PID: d.Process.PID, ParentPID: d.Process.ParentPID, Name: d.Process.Name}
@@ -119,6 +119,26 @@ func (m model) treeLines() []string {
 		}
 		if other > 0 {
 			lines = append(lines, dim.Render(fmt.Sprintf("%d other sockets in evidence", other)))
+		}
+		lines = append(lines, "", dim.Render("UNIX PEER DESCRIPTOR OWNERS"))
+		for _, peer := range m.evidence.UnixPeers {
+			lines = append(lines, dim.Render(fmt.Sprintf("inode %d ↔ %d", peer.LocalInode, peer.PeerInode)))
+			for _, owner := range peer.Owners {
+				lines = append(lines, textStyle.Render("├─↔ held by "+nodeLabel(owner.Name, owner.PID)))
+			}
+			if len(peer.Owners) == 0 {
+				lines = append(lines, dim.Render("└─ owner unavailable"))
+			}
+		}
+		lines = append(lines, "", dim.Render("RELATIVES' INTERNET SOCKETS"), dim.Render("Parentage ≠ communication"))
+		for _, entry := range m.evidence.FamilyNetwork {
+			lines = append(lines, textStyle.Render("├─ "+entry.Relationship+": "+nodeLabel(entry.Process.Name, entry.Process.PID)))
+			for _, c := range entry.Connections {
+				lines = append(lines, dim.Render("│  "+c.Protocol+" → "+net.JoinHostPort(c.Remote.IP, strconv.Itoa(int(c.Remote.Port)))+" "+c.State))
+			}
+			if len(entry.Connections) == 0 {
+				lines = append(lines, dim.Render("│  no internet sockets returned"))
+			}
 		}
 		lines = append(lines, "", dim.Render("Collected snapshot; may change."), dim.Render("See overview for missing data."))
 	} else {
