@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shirou/gopsutil/v3/host"
-	gnet "github.com/shirou/gopsutil/v3/net"
-	"github.com/shirou/gopsutil/v3/process"
+	"github.com/shirou/gopsutil/v4/host"
+	gnet "github.com/shirou/gopsutil/v4/net"
+	"github.com/shirou/gopsutil/v4/process"
 )
 
 const explanationTask = `Explain this particular process instance on this machine using the collected evidence, not a generic process-name description. Start with a concrete summary of what this instance is doing. Then explain its observed software identity, launcher/ancestors, children and siblings, working directory, open files, mapped files, service cgroup, and sockets where evidence exists. Cite JSON field names and actual paths/PIDs/endpoints for important claims. Explain how these observations connect; distinguish observed relationships from hypotheses. An ancestor is a launcher, a sibling only shares a parent, a mapped file may be code or data, and only an observed_local_peer identifies a local peer process; other remote socket addresses do not identify software. Do not invent file contents, paired devices, network peers, or causality. Empty, unavailable, and truncated evidence are different. Explain relevant gaps briefly. Avoid generic verification checklists when the data already answers the question. End with at most two specific read-only next steps if needed.`
@@ -175,7 +175,7 @@ func investigate(ctx context.Context, pid int32, progress ...func(int)) (investi
 		}
 	}
 	report(3)
-	files, err := p.OpenFilesWithContext(ctx)
+	files, err := processOpenFiles(ctx, p)
 	note("open_files", err)
 	for _, f := range files {
 		d.OpenFiles = append(d.OpenFiles, f.Path)
@@ -328,11 +328,13 @@ func packageOwner(ctx context.Context, exe string) (string, error) {
 type limitedOutput struct {
 	strings.Builder
 	remaining int
+	truncated bool
 }
 
 func (w *limitedOutput) Write(b []byte) (int, error) {
 	n := len(b)
 	if len(b) > w.remaining {
+		w.truncated = true
 		b = b[:w.remaining]
 	}
 	w.Builder.Write(b)

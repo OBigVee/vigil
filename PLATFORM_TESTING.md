@@ -11,13 +11,13 @@ The `Platform validation` GitHub Actions workflow builds and runs Vigil on nativ
 | macOS 14 | arm64 | current stable | enabled | Apple Silicon native behavior |
 | macOS 15 Intel | amd64 | current stable | enabled | Intel Mac native behavior |
 | Windows 2025 | amd64 | current stable | enabled | Windows native behavior |
-| macOS 14 | arm64 | current stable | disabled | Reproduce the v0.1.0 release build mode |
+| macOS 14 | arm64 | current stable | disabled | Validate the shipped no-CGO build mode |
 
 Race detection runs in CGO-enabled jobs; the no-CGO job runs ordinary tests. These jobs do not validate Linux arm64 or Windows arm64 runtime behavior yet. Compiling a release for those architectures is not proof that it runs correctly.
 
 Each job verifies dependency checksums, runs vet and tests, builds an executable, and exercises its version, config setup, snapshot output and search behavior. OS integration tests use the test process itself, a temporary file, a loopback listener, and a controlled child Go process. They check process identity, resource collection, ancestry and child relationships. Paths are compared after resolving symlinks, with Windows case normalization.
 
-Linux fixture files, sockets and working directories must be found. On other platforms, unavailable fields must be explicitly reported in collection notes; successful calls with silently missing fixture data fail validation. Unsupported aggregate CPU is accepted only in the explicitly named macOS no-CGO lane. It must produce a collection warning; zero without a warning is not accepted. These allowances describe capabilities, not full feature parity.
+Linux fixture files, sockets and working directories must be found. On other platforms, unavailable fields must be explicitly reported in collection notes; successful calls with silently missing fixture data fail validation. Aggregate CPU must work in every lane, including macOS without CGO. A collection warning fails the executable smoke test. These allowances describe capabilities, not full feature parity.
 
 The executable smoke test emits only an OS/architecture/capability summary. It does not print other process names, files, endpoints, configuration contents or environment variables. It never requests an AI interpretation. Full integration test logs may contain test fixture paths in failure messages; do not submit private investigation reports as CI artifacts.
 
@@ -30,15 +30,17 @@ go build -ldflags '-X main.version=platform-validation' -o dist/platform-validat
 python3 scripts/validate_platform.py --binary dist/platform-validation/vigil
 ```
 
-On Windows, add `.exe` to the binary name and use an installed Python interpreter. Race tests require a supported C compiler. For a deliberate no-CGO macOS check, set `CGO_ENABLED=0`, omit `-race`, and pass `--allow-missing-cpu` to the smoke script.
+On Windows, add `.exe` to the binary name and use an installed Python interpreter. Race tests require a supported C compiler. For a deliberate no-CGO macOS check, set `CGO_ENABLED=0` and omit `-race`; the same strict smoke checks apply.
 
 ## Known gaps and next collector work
 
-The pinned gopsutil v3 dependency returns unsupported errors for aggregate CPU and current working directory on macOS without CGO, and open-file collection on macOS is unimplemented even with CGO. v0.1.0 was cross-built with CGO disabled. Keep those published binaries experimental. The CI native macOS jobs enable CGO to separate build-mode limitations from remaining collector limitations; this workflow does not replace the release build pipeline.
+v0.1.0 used gopsutil v3 and was cross-built with CGO disabled. That combination lacked aggregate CPU and current working directory support on macOS, returned an incorrect executable path in the fixture, and did not implement macOS open-file collection. Keep the original v0.1.0 binaries experimental.
+
+The macOS fix migrates to gopsutil v4.26.7 (retaining Go 1.24 compatibility) for CPU, executable and working directory collection without CGO. A Darwin-only, PID-scoped `/usr/sbin/lsof` invocation supplies regular-file and directory descriptor paths. Its NUL-delimited output is bounded to 8 MiB and a three-second child context; errors and timeouts become explicit collection notes. No shell, arguments, environment values or file contents are collected. macOS fixtures now require working directories, file paths and listener evidence, rather than accepting unavailable notes. Linux-only mapped-file and cgroup collection remain unavailable on macOS.
 
 After examining actual native job results, use focused follow-up branches:
 
-- `fix/macos-collector`: native release builds or a validated dependency upgrade; fill macOS evidence gaps.
+- `fix/macos-collector`: validate the no-CGO CPU/identity migration and open-file collector on Intel and Apple Silicon.
 - `fix/windows-collector`: address observed permission/path/socket/service issues.
 - A future release pipeline should run each shipped binary's checks on its target OS before publication. Publish fixes under a new version rather than replacing v0.1.0 assets.
 

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
-	gnet "github.com/shirou/gopsutil/v3/net"
+	gnet "github.com/shirou/gopsutil/v4/net"
 )
 
 func TestLiveProcessTree(t *testing.T) {

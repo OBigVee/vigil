@@ -52,12 +52,12 @@ jobs:
             cgo: '1'
             test_flags: '-race'
             smoke_flags: ''
-          - name: macOS arm64 / v0.1.0 no-CGO mode
+          - name: macOS arm64 / release no-CGO mode
             runner: macos-14
             go: stable
             cgo: '0'
             test_flags: ''
-            smoke_flags: '--allow-missing-cpu'
+            smoke_flags: ''
     env:
       CGO_ENABLED: ${{ matrix.cgo }}
     defaults:

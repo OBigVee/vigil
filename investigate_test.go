@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	gnet "github.com/shirou/gopsutil/v3/net"
+	gnet "github.com/shirou/gopsutil/v4/net"
 )
 
 func TestInvestigateCurrentProcess(t *testing.T) {
@@ -52,7 +52,7 @@ func TestInvestigateCurrentProcess(t *testing.T) {
 		t.Fatal("wrong executable path")
 	}
 	if hasCollectionNote(d.Notes, "working_directory:") {
-		if runtime.GOOS == "linux" {
+		if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
 			t.Fatal("working directory unexpectedly unavailable")
 		}
 		t.Log("working directory reported unavailable on this platform")
@@ -67,7 +67,7 @@ func TestInvestigateCurrentProcess(t *testing.T) {
 		}
 	}
 	if !found {
-		if runtime.GOOS != "linux" && hasCollectionNote(d.Notes, "open_files:") {
+		if runtime.GOOS != "linux" && runtime.GOOS != "darwin" && hasCollectionNote(d.Notes, "open_files:") {
 			t.Log("open files reported unavailable on this platform")
 		} else {
 			t.Fatal("open fixture file not observed or reported unavailable")
@@ -81,7 +81,7 @@ func TestInvestigateCurrentProcess(t *testing.T) {
 		}
 	}
 	if !found {
-		if runtime.GOOS != "linux" && hasCollectionNote(d.Notes, "connections:") {
+		if runtime.GOOS != "linux" && runtime.GOOS != "darwin" && hasCollectionNote(d.Notes, "connections:") {
 			t.Log("socket ownership reported unavailable on this platform")
 		} else {
 			t.Fatal("fixture listener not observed or reported unavailable")

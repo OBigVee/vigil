@@ -13,12 +13,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', required=True)
     parser.add_argument('--expected-version', default='platform-validation')
-    parser.add_argument('--allow-missing-cpu', action='store_true')
     args = parser.parse_args()
     binary = str(Path(args.binary).resolve())
 
     def run(*arguments):
-        return subprocess.check_output([binary, *arguments], text=True, timeout=60)
+        return subprocess.check_output([binary, *arguments], text=True, encoding="utf-8", timeout=60)
 
     assert run('--version').strip() == f'Vigil {args.expected_version}', 'wrong binary version'
     with tempfile.TemporaryDirectory(prefix='vigil-platform-') as temp:
@@ -35,10 +34,7 @@ def main():
     assert snapshot['processes'], 'no processes enumerated'
     assert all(p['pid'] >= 0 and p['name'] for p in snapshot['processes']), 'invalid process records'
     warning = snapshot.get('collection_warning', '')
-    if not args.allow_missing_cpu:
-        assert not warning, 'native collection returned warnings: ' + warning
-    else:
-        assert platform.system() == 'Darwin' and warning, 'expected the known macOS no-CGO gap'
+    assert not warning, 'native collection returned warnings: ' + warning
     missing = json.loads(run('--snapshot', '--search', '__vigil_nonexistent_fixture_process__'))
     assert not missing['processes'], 'name search failed to exclude unrelated processes'
     # Summary intentionally excludes other processes' names, paths, and endpoints.

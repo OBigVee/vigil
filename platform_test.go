@@ -8,29 +8,16 @@ import (
 	"math"
 	"os"
 	"os/exec"
-	"runtime"
 	"testing"
 	"time"
 
-	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v4/cpu"
 )
 
 func TestPlatformCPUCapability(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	values, err := cpu.PercentWithContext(ctx, 150*time.Millisecond, false)
-	knownMissing := runtime.GOOS == "darwin" && !platformTestCGO
-	if knownMissing {
-		if err == nil {
-			t.Fatal("macOS no-CGO capability changed: update the recorded release limitation")
-		}
-		sample := (&collector{}).collect()
-		if sample.Warning == "" {
-			t.Fatal("unsupported aggregate CPU must be reported, not silently shown as zero")
-		}
-		t.Log("Known v0.1.0 macOS no-CGO gap: aggregate CPU unavailable; native CGO lane must collect it")
-		return
-	}
 	if err != nil || len(values) != 1 {
 		t.Fatalf("native aggregate CPU collection failed: %v", err)
 	}
