@@ -1,43 +1,33 @@
-# Vigil v0.1.0 — preview
+# Vigil v0.1.1 — macOS collector fix (preview)
 
-Vigil is a Go terminal system monitor with optional machine-specific intelligence.
+This patch provides corrected macOS downloads for Intel and Apple Silicon. It fixes the CPU and process-evidence limitations in v0.1.0 without requiring users to install Go or enable CGO.
 
-## Downloads
+## Download and run
 
-Choose your operating system and CPU architecture:
+- `vigil_v0.1.1_darwin_arm64.tar.gz`: Apple Silicon (M1/M2/M3 and newer ARM64 Macs).
+- `vigil_v0.1.1_darwin_amd64.tar.gz`: Intel Macs.
+- `SHA256SUMS`: SHA-256 checksums for the two archives.
 
-- **Linux amd64**: most Intel/AMD PCs. Primary development and runtime test platform.
-- **Linux arm64**: ARM64 machines. Cross-compiled; needs hardware validation.
-- **macOS (darwin) amd64 / arm64**: Intel / Apple Silicon. Experimental cross-compiled builds; not runtime-tested. Cgroups and mapped-file collection are Linux-only.
-- **Windows amd64 / arm64**: experimental cross-compiled builds; not runtime-tested. Some process evidence may be unavailable. Use Windows Terminal or another modern terminal.
+Extract the matching archive, open Terminal in the extracted directory, and run `./vigil`. Check `./vigil --version` reports v0.1.1. Archives contain the executable, README, blank configuration example and these notes. No credentials are included. Developer ID signing and notarization are not provided.
 
-Archives contain only the executable, README, blank configuration example, and these release notes. No keys or personal configuration are included. `SHA256SUMS` allows you to check download integrity. These binaries are not code-signed or notarized.
+Existing users should replace the old binary and keep their private configuration file. The provider settings and evidence-review controls have not changed. New users can run `./vigil --init-config`, open the printed file and set their provider and API key. Local inspection works without a key.
 
-Extract the archive, open a terminal in its folder, and run `./vigil` (Linux/macOS) or `.\vigil.exe` (Windows PowerShell). No Go installation is needed. Local monitoring and inspection work without an API key.
+## Fixed on macOS
 
-## Connect your own intelligence provider
+- Aggregate CPU collection works in the CGO-disabled mode used by the downloads.
+- Executable paths and working directories use the maintained native macOS implementation, replacing the incorrect no-CGO executable-path fallback.
+- Open regular-file and directory descriptor paths are collected through PID-scoped `/usr/sbin/lsof` metadata. Collection is time- and size-bounded and does not read file contents, process arguments or environment values.
+- The dependency upgrade retains Go 1.24 support for source builds.
 
-Run `./vigil --init-config` (Windows: `.\vigil.exe --init-config`). It prints the location of your new configuration file. Open that file in a text editor and set:
+## Verification
 
-```dotenv
-VIGIL_PROVIDER=openai
-VIGIL_API_KEY=your-own-api-key
-```
+Native Intel and Apple Silicon checks cover CPU, memory, process identity and family, working directory, an open fixture file and a loopback listener. Both release architectures passed without CGO. Linux regression tests passed on minimum and current Go versions. These are automated OS and executable checks; manual desktop testing and live paid LLM calls have not been performed for this patch.
 
-Choose `deepseek`, `openai`, `gemini`, or `compatible`. Override the model with `VIGIL_MODEL`. Compatible services also require `VIGIL_BASE_URL` pointing to their API base URL. Keyless loopback endpoints are supported for local servers. Arbitrary vendor-specific APIs are not automatically supported.
+Validation runs: [Apple Silicon and CGO-enabled native checks](https://github.com/OBigVee/vigil/actions/runs/40911107843), [Intel release-mode checks](https://github.com/OBigVee/vigil/actions/runs/40911662586). The application source and dependency versions are identical between these two runs; the second adjusts the Intel CI build mode.
 
-Restart Vigil after saving. Press `/` to find a name or PID, `i` to collect process evidence, and Enter to request an interpretation after reviewing the payload. External requests use your provider account and its billing; access and model availability depend on that account. Provider integrations have mock-server tests; paid live calls have not been tested for this release.
+## Remaining limits
 
-## Included
-
-- Live CPU, memory, process selection, sorting, pause, and name/PID search.
-- Process tree with parent/child relationships and identified local TCP peers.
-- Executable/package identity, files, working directory, sockets and Linux service clues.
-- Animated collection stages, evidence review, and optional intelligence interpretation.
-- DeepSeek, OpenAI Responses, Gemini generateContent, and OpenAI-compatible chat endpoints.
-- Private per-user configuration, environment variables, and legacy `.env` support.
-- Offline JSON exports through `--snapshot` and `--inspect PID`.
-
-## Limits
-
-This is an early preview, not a fully validated cross-platform stable release. Process permissions and platform support affect evidence availability. Snapshot-based triage has no trusted baseline and does not prove malware or root cause. Windows/macOS runtime behavior, temperature sensors, long-term process histories, and disk/network throughput monitoring remain future work.
+- Permissions can restrict evidence from protected processes. Inaccessible data is reported in collection notes.
+- Cgroups and mapped-file collection remain Linux-only. No temperature/history/baseline features were added.
+- This is still a preview and does not establish complete platform parity.
+- This patch publishes macOS archives only. Linux and Windows downloads remain available in [v0.1.0](https://github.com/OBigVee/vigil/releases/tag/v0.1.0). Windows still fails the open-file fixture and remains experimental; it is not claimed fixed by this patch.

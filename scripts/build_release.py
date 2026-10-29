@@ -47,13 +47,16 @@ def build(version, target, output):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('version')
+    parser.add_argument('--target', action='append', choices=[f'{s}/{a}' for s,a in TARGETS],
+                        help='build only this target; repeat for multiple targets')
     args = parser.parse_args()
     if not re.fullmatch(r'v\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?', args.version):
         parser.error('version must look like v0.1.0')
     output = ROOT / 'dist' / args.version
     output.mkdir(parents=True, exist_ok=True)
+    targets = [tuple(t.split("/")) for t in dict.fromkeys(args.target)] if args.target else TARGETS
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        archives = list(executor.map(lambda target: build(args.version, target, output), TARGETS))
+        archives = list(executor.map(lambda target: build(args.version, target, output), targets))
     checksums = []
     for archive in sorted(archives):
         checksums.append(f'{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n')

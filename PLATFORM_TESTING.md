@@ -57,3 +57,9 @@ CI does not exercise a user's interactive desktop session. On each target machin
 7. Confirm local monitoring works without an API key. Optional real API testing requires the tester's own key and explicit evidence confirmation.
 
 Record OS version, CPU architecture, terminal, Vigil version, the expected observation, actual result and sanitized collection notes. Never include API keys, full environment dumps, or private raw process payloads in issue reports.
+
+## macOS fix verification
+
+The macOS fix application code at `1525424` passed native Apple Silicon tests with CGO both enabled and disabled. The identical application code at `cc63b11` passed Intel macOS tests in release no-CGO mode; only CI/documentation changed between those commits. Linux minimum/current Go regression jobs passed. The Windows open-file fixture still fails and is separate work. Run links are recorded in RELEASE_NOTES.md.
+
+Mac-only patch archives can be built with `python3 scripts/build_release.py v0.1.1 --target darwin/amd64 --target darwin/arm64`. Pass the same target flags to the publisher so the checksummed manifest must match the intended platforms. Published v0.1.0 assets are not overwritten.

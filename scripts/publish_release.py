@@ -18,6 +18,8 @@ REPO = 'OBigVee/vigil'
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('version')
+    parser.add_argument('--target', action='append', choices=[f'{s}/{a}' for s in ('linux','darwin','windows') for a in ('amd64','arm64')])
+    parser.add_argument('--title', help='public release title')
     args = parser.parse_args()
     if not re.fullmatch(r'v\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?', args.version):
         parser.error('invalid version')
@@ -50,8 +52,14 @@ def main():
         if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             raise RuntimeError(f'checksum failed for {name}')
         files.append(path)
-    if len(files) != 6:
-        raise RuntimeError('expected six platform archives')
+    targets = args.target or [f'{s}/{a}' for s in ('linux','darwin','windows') for a in ('amd64','arm64')]
+    expected = set()
+    for target in targets:
+        system, arch = target.split('/')
+        extension = 'zip' if system == 'windows' else 'tar.gz'
+        expected.add(f'vigil_{args.version}_{system}_{arch}.{extension}')
+    if len(files) != len(expected) or {p.name for p in files} != expected:
+        raise RuntimeError('archive manifest does not match the selected release targets')
     files.append(checksum_file)
     # Ensure the tag exists on GitHub before creating a release.
     api = f'https://api.github.com/repos/{REPO}'
@@ -61,7 +69,7 @@ def main():
     if existing and not existing['draft']:
         raise RuntimeError('release is already published; do not overwrite published assets')
     release = existing or request('POST', f'{api}/releases', {
-        'tag_name': args.version, 'name': f'Vigil {args.version} — first preview',
+        'tag_name': args.version, 'name': args.title or f'Vigil {args.version} preview',
         'body': (ROOT / 'RELEASE_NOTES.md').read_text(), 'draft': True, 'prerelease': True})
     existing_assets = {asset['name'] for asset in release['assets']}
     for path in files:
